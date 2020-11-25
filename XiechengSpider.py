@@ -1,5 +1,6 @@
 # -*- coding:UTF-8 -*-
-
+import _thread
+import datetime
 import time
 import urllib.request
 import urllib.parse
@@ -8,6 +9,7 @@ from bs4 import BeautifulSoup
 import json
 from selenium.webdriver.chrome.options import Options
 from selenium import webdriver
+from Parser import Parser
 
 
 class Spider:
@@ -23,7 +25,8 @@ class Spider:
         chrome_options.add_argument('--disable-plugins')
         chrome_options.add_argument('--disable-images')
         self.driver = webdriver.Chrome(options=chrome_options)
-        self.lowest = {"价格": 99999}
+        self.thread_list = []
+        self.flightsInformation = {}
 
     def __execute_times(self, times):
         time.sleep(1)
@@ -37,99 +40,27 @@ class Spider:
         return path
 
     def searchFlightsInformation(self, starting_city, destination, date):
-        request = urllib.request.Request(url=self.__urlEncode(starting_city, destination, date), headers=self.headers)
-        response = urllib.request.urlopen(request)
-        html = response.read().decode("utf-8")
-        url = self.__urlEncode(starting_city, destination, date)
-        self.driver.get(url)
-        self.__execute_times(10)  # 完全载入之后才会进行下一步操作
-        html = self.driver.page_source
-        bs = BeautifulSoup(html, "html.parser")
-        flights_div = bs.select("div[class='search_table_header']")
-        flights_list = []
-        for flight in flights_div:
-            flights_list.append(self.__parseFlightInformation(flight))
-        # print(len(flights_list))
-        self.__output(flights_list)
+        date = datetime.datetime.strptime(date, "%Y-%m-%d")
+        for i in range(-2, 3):
+            searchDate = (date + datetime.timedelta(days=i)).strftime("%Y-%m-%d")
+            if (datetime.datetime.now().strftime('%Y-%m-%d') > searchDate):
+                continue
+            url = self.__urlEncode(starting_city, destination, searchDate)
+            self.driver.get(url)
+            self.__execute_times(10)  # 完全载入之后才会进行下一步操作
+            html = self.driver.page_source
+            self.newThreadParse(html, searchDate)
+        for thread in self.thread_list:
+            thread.join()
+        # if (self.flightsInformation[date]["当天最低价格"][] == 0:
+        #     print("当前线路无航班信息")
+        # else:
+        print(self.flightsInformation)
 
-    def __parseFlightInformation(self, flight):
-        price = eval(self.__getPrice(flight))
-        information = {
-            "航空公司": self.__getCompany(flight),
-            "航班号": self.__getNumber(flight),
-            "飞机型号": self.__getModel(flight),
-            "出发到达时间": self.__getTime(flight),
-            "出发到达机场": self.__getAirport(flight),
-            "到达准点率": self.__getPunctualityRate(flight),
-            "价格": price
-        }
-        if price < self.lowest["价格"]:
-            self.lowest = information
-        return information
-
-    def __getCompany(self, search_table_header):
-        try:
-            flightCompany = search_table_header.select("div[class='logo-item flight_logo']")[
-                0].div.span.span.strong.get_text()
-        except:
-            flightCompany = ""
-        return flightCompany.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __getNumber(self, search_table_header):
-        try:
-            flightNumber = search_table_header.select("div[class='logo-item flight_logo']")[0].div.span.span.span.string
-        except:
-            flightNumber = ""
-        return flightNumber.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __getModel(self, search_table_header):
-        try:
-            model = search_table_header.select("span[class='direction_black_border low_text']")[0].string
-        except:
-            model = ""
-        return model.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __getTime(self, search_table_header):
-        try:
-            time_box = search_table_header.select("div[class='time_box']")
-            departureTime = time_box[0].strong.string.lstrip().rstrip().replace('\n', '').replace('\r', '')
-            arrivalTime = time_box[1].strong.string.lstrip().rstrip().replace('\n', '').replace('\r', '')
-            time = departureTime + " -> " + arrivalTime
-        except:
-            time = ""
-        return time.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __getAirport(self, search_table_header):
-        try:
-            airport = search_table_header.select("div[class='airport']")
-            departureAirport = airport[0].string.lstrip().rstrip().replace('\n', '').replace('\r', '')
-            arrivalAirport = airport[1].string.lstrip().rstrip().replace('\n', '').replace('\r', '')
-            airport = departureAirport + " -> " + arrivalAirport
-        except:
-            airport = ""
-        return airport.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __getPunctualityRate(self, search_table_header):
-        try:
-            rate = search_table_header.select("span[class='direction_black_border']")[0].string
-        except:
-            rate = ""
-        return rate.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __getPrice(self, search_table_header):
-        try:
-            price = search_table_header.select("span[class='base_price02']")[0].get_text()[1:]
-        except:
-            price = ""
-        return price.lstrip().rstrip().replace('\n', '').replace('\r', '')
-
-    def __output(self, flights_list):
-        # print("您搜索的" + time + "从" + placeOfDeparture + "出发到" + placeOfArrival + "的航班信息如下")
-        dict = {
-            "历次爬取最低价格：": self.lowest,
-            "所有航班信息": flights_list
-        }
-        print(dict)
+    def newThreadParse(self, html, date):
+        thread = Parser(html, date, self.flightsInformation)
+        self.thread_list.append(thread)
+        thread.start()
 
 
 city = {
@@ -184,7 +115,7 @@ def echo():
 
 if __name__ == '__main__':
     while True:
-        print("请分行输入出发城市，目的城市，时间（yyyy-mm-dd）:")
+        print("请分行输入出发城市，目的城市，时间（yyyy-mm-dd）（自动帮您查取临近日期航班信息）:")
         placeOfDeparture = input()
         placeOfArrival = input()
         date = input()
