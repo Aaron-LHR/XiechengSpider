@@ -1,13 +1,13 @@
 # -*- coding:UTF-8 -*-
-import hashlib
-import random
-import re
+
 import time
 import urllib.request
 import urllib.parse
 from urllib.parse import quote
 from bs4 import BeautifulSoup
 import json
+from selenium.webdriver.chrome.options import Options
+from selenium import webdriver
 
 
 class Spider:
@@ -15,60 +15,81 @@ class Spider:
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                           "Chrome/86.0.4240.183 Safari/537.36"}
+        chrome_options = Options()
+        chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--disable-plugins')
+        chrome_options.add_argument('--disable-javascript')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-plugins')
+        chrome_options.add_argument('--disable-images')
+        self.driver = webdriver.Chrome(options=chrome_options)
+        self.lowest = {"价格": 99999}
 
-    def urlEncode(self, starting_city, destination, date):
+    def __execute_times(self, times):
+        time.sleep(1)
+        for i in range(times + 1):
+            self.driver.execute_script("window.scrollTo(0,document.body.scrollHeight)")
+
+    def __urlEncode(self, starting_city, destination, date):
         starting_city = quote(starting_city, encoding="utf-8")
         destination = quote(destination, encoding="utf-8")
         path = "https://flights.ctrip.com/itinerary/oneway/" + starting_city + "-" + destination + "?date=" + date
         return path
 
     def searchFlightsInformation(self, starting_city, destination, date):
-        request = urllib.request.Request(url=self.urlEncode(starting_city, destination, date), headers=self.headers)
+        request = urllib.request.Request(url=self.__urlEncode(starting_city, destination, date), headers=self.headers)
         response = urllib.request.urlopen(request)
         html = response.read().decode("utf-8")
-        with open("xiecheng.html", mode="w", encoding="utf-8") as file:
-            file.write(html)
+        url = self.__urlEncode(starting_city, destination, date)
+        self.driver.get(url)
+        self.__execute_times(10)  # 完全载入之后才会进行下一步操作
+        html = self.driver.page_source
         bs = BeautifulSoup(html, "html.parser")
         flights_div = bs.select("div[class='search_table_header']")
-        flights_dict = {}
-        for i in range(len(flights_div)):
-            flights_dict[str(i)] = self.parseFlightInformation(flights_div[i])
-        self.output(flights_dict, date, starting_city, destination)
+        flights_list = []
+        for flight in flights_div:
+            flights_list.append(self.__parseFlightInformation(flight))
+        # print(len(flights_list))
+        self.__output(flights_list)
 
-    def parseFlightInformation(self, flight):
+    def __parseFlightInformation(self, flight):
+        price = eval(self.__getPrice(flight))
         information = {
-            "航空公司": self.getCompany(flight),
-            "航班号": self.getNumber(flight),
-            "飞机型号": self.getModel(flight),
-            "出发到达时间": self.getTime(flight),
-            "出发到达机场": self.getAirport(flight),
-            "到达准点率": self.getPunctualityRate(flight),
+            "航空公司": self.__getCompany(flight),
+            "航班号": self.__getNumber(flight),
+            "飞机型号": self.__getModel(flight),
+            "出发到达时间": self.__getTime(flight),
+            "出发到达机场": self.__getAirport(flight),
+            "到达准点率": self.__getPunctualityRate(flight),
+            "价格": price
         }
+        if price < self.lowest["价格"]:
+            self.lowest = information
         return information
 
-
-    def getCompany(self, search_table_header):
+    def __getCompany(self, search_table_header):
         try:
-            flightCompany = search_table_header.select(".logo-item flight-logo")[0].div.span.span.span.string
+            flightCompany = search_table_header.select("div[class='logo-item flight_logo']")[
+                0].div.span.span.strong.get_text()
         except:
             flightCompany = ""
         return flightCompany.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def getNumber(self, search_table_header):
+    def __getNumber(self, search_table_header):
         try:
-            flightNumber = search_table_header.select(".logo-item flight-logo")[0].div.span.span.strong.string
+            flightNumber = search_table_header.select("div[class='logo-item flight_logo']")[0].div.span.span.span.string
         except:
             flightNumber = ""
         return flightNumber.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def getModel(self, search_table_header):
+    def __getModel(self, search_table_header):
         try:
             model = search_table_header.select("span[class='direction_black_border low_text']")[0].string
         except:
             model = ""
         return model.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def getTime(self, search_table_header):
+    def __getTime(self, search_table_header):
         try:
             time_box = search_table_header.select("div[class='time_box']")
             departureTime = time_box[0].strong.string.lstrip().rstrip().replace('\n', '').replace('\r', '')
@@ -78,7 +99,7 @@ class Spider:
             time = ""
         return time.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def getAirport(self, search_table_header):
+    def __getAirport(self, search_table_header):
         try:
             airport = search_table_header.select("div[class='airport']")
             departureAirport = airport[0].string.lstrip().rstrip().replace('\n', '').replace('\r', '')
@@ -88,67 +109,28 @@ class Spider:
             airport = ""
         return airport.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def getPunctualityRate(self, search_table_header):
+    def __getPunctualityRate(self, search_table_header):
         try:
             rate = search_table_header.select("span[class='direction_black_border']")[0].string
         except:
             rate = ""
         return rate.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def getPrice(self, search_table_header):
+    def __getPrice(self, search_table_header):
         try:
-            price = search_table_header.select("span[class='base_price02']")[0].string
+            price = search_table_header.select("span[class='base_price02']")[0].get_text()[1:]
         except:
             price = ""
         return price.lstrip().rstrip().replace('\n', '').replace('\r', '')
 
-    def output(self, flights_dict, time, placeOfDeparture, placeOfArrival):
+    def __output(self, flights_list):
         # print("您搜索的" + time + "从" + placeOfDeparture + "出发到" + placeOfArrival + "的航班信息如下")
-        print(json.dumps(flights_dict))
+        dict = {
+            "历次爬取最低价格：": self.lowest,
+            "所有航班信息": flights_list
+        }
+        print(dict)
 
-
-
-
-
-def echo():
-    try:
-        while (True):
-            reptile = Spider()
-            reptile.searchPaperListByKeyWord()
-    except Exception as e:
-        print(e)
-        echo()
-
-
-# if __name__ == '__main__':
-#     field = {
-#         '1': "计算机",
-#         '2': "哲学",
-#         '3': "经济",
-#         '4': "法律",
-#         '5': "文学",
-#         '6': "艺术",
-#         '7': "历史",
-#         '8': "数学",
-#         '9': "农学",
-#         '10': "医药",
-#         '11': "心理",
-#         '12': "体育",
-#         '13': "工程",
-#     }
-#
-#     while True:
-#         print("请选择要爬取的领域：输入阿拉伯数字")
-#         for i in range(1, 14):
-#             print(str(i) + ':' + field[str(i)])
-#         i = input()
-#         if i in field.keys():
-#             print("开始爬取")
-#             break
-#     reptile = Spider()
-#     echo(field[i])
-
-# reptile.savePaperByUrl("https://xueshu.baidu.com/usercenter/paper/show?paperid=25e67940fc9a3c7999ab272f72a2b2ab&site=xueshu_se")
 
 city = {
     '阿勒泰': 'AAT', '阿克苏': 'AKU', '鞍山': 'AOG', '安庆': 'AQG', '安顺': 'AVA', '阿拉善左旗': 'AXF', '澳门': 'MFM', '阿里': 'NGQ',
@@ -190,9 +172,14 @@ city = {
 }
 
 
-def test(url):
-    reptile = Spider()
-    reptile.savePaperByUrl(url)
+def echo():
+    try:
+        while True:
+            spider.searchFlightsInformation(placeOfDeparture, placeOfArrival, date)
+            time.sleep(10)
+    except Exception as e:
+        print(e)
+        echo()
 
 
 if __name__ == '__main__':
@@ -209,4 +196,4 @@ if __name__ == '__main__':
         except:
             print("没找到所输入城市或日期不合法，请重新输入")
     spider = Spider()
-    spider.searchFlightsInformation(placeOfDeparture, placeOfArrival, date)
+    echo()
