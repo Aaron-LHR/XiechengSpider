@@ -1,11 +1,8 @@
 # -*- coding:UTF-8 -*-
-import _thread
+
 import datetime
 import time
-import urllib.request
-import urllib.parse
 from urllib.parse import quote
-from bs4 import BeautifulSoup
 import json
 from selenium.webdriver.chrome.options import Options
 from selenium import webdriver
@@ -13,7 +10,14 @@ from Parser import Parser
 
 
 class Spider:
+    """
+    用来爬取html的类
+    """
     def __init__(self):
+        """
+        初始化request的User-Agent
+        初始化webdriver的属性
+        """
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                           "Chrome/86.0.4240.183 Safari/537.36"}
@@ -27,40 +31,74 @@ class Spider:
         self.driver = webdriver.Chrome(options=chrome_options)
         self.thread_list = []
         self.flightsInformation = {}
+        self.numOfSearch = 1
 
     def __execute_times(self, times):
+        """
+        等待一段时间并滚动至页面底部以获取所有数据
+        :param times: 尝试滚动的次数
+        :return: 无返回
+        """
         time.sleep(1)
         for i in range(times + 1):
             self.driver.execute_script("window.scrollTo(0,document.body.scrollHeight)")
 
     def __urlEncode(self, starting_city, destination, date):
+        """
+        生成对应航线对应日期的url
+        :param starting_city: 出发地
+        :param destination: 目的地
+        :param date: 日期
+        :return: 对应的url
+        """
         starting_city = quote(starting_city, encoding="utf-8")
         destination = quote(destination, encoding="utf-8")
         path = "https://flights.ctrip.com/itinerary/oneway/" + starting_city + "-" + destination + "?date=" + date
         return path
 
     def searchFlightsInformation(self, starting_city, destination, date):
+        """
+        获得对应航线对应日期及邻近日期的搜索结果页面的html，对每一个html都创建一个新线程来解析，并输出结果至json文件
+        :param starting_city: 出发地
+        :param destination: 目的地
+        :param date: 日期
+        :return: 无返回
+        """
         date = datetime.datetime.strptime(date, "%Y-%m-%d")
         for i in range(-2, 3):
             searchDate = (date + datetime.timedelta(days=i)).strftime("%Y-%m-%d")
-            if (datetime.datetime.now().strftime('%Y-%m-%d') > searchDate):
+            if datetime.datetime.now().strftime('%Y-%m-%d') > searchDate:
                 continue
             url = self.__urlEncode(starting_city, destination, searchDate)
             self.driver.get(url)
             self.__execute_times(10)  # 完全载入之后才会进行下一步操作
             html = self.driver.page_source
-            self.newThreadParse(html, searchDate)
+            self.__newThreadParse(html, searchDate)
         for thread in self.thread_list:
             thread.join()
-        # if (self.flightsInformation[date]["当天最低价格"][] == 0:
-        #     print("当前线路无航班信息")
-        # else:
-        print(self.flightsInformation)
+        self.__output()
 
-    def newThreadParse(self, html, date):
+    def __newThreadParse(self, html, date):
+        """
+        创建新线程解析html页面
+        :param html: 要解析的html页面
+        :param date: 该搜索结果对应的日期
+        :return: 无返回，但是会向类属性thread_list里添加解析结果
+        """
         thread = Parser(html, date, self.flightsInformation)
         self.thread_list.append(thread)
         thread.start()
+
+    def __output(self):
+        """
+        输出爬取及解析结果
+        :return: 无返回
+        """
+        with open("result.json", mode="w", encoding="utf-8") as file:
+            file.write(json.dumps(self.flightsInformation))
+        print("第" + str(self.numOfSearch) + "次爬取已完成，已写入result.json，结果预览为")
+        print(self.flightsInformation)
+        self.numOfSearch += 1
 
 
 city = {
@@ -104,6 +142,10 @@ city = {
 
 
 def echo():
+    """
+    保证程序无论遇到什么异常都可以重新继续爬取
+    :return: 无返回
+    """
     try:
         while True:
             spider.searchFlightsInformation(placeOfDeparture, placeOfArrival, date)
@@ -122,8 +164,10 @@ if __name__ == '__main__':
         try:
             placeOfDeparture = city[placeOfDeparture]
             placeOfArrival = city[placeOfArrival]
-            time.strptime(date, "%Y-%m-%d")
-            break
+            if time.strptime(date, "%Y-%m-%d") > time.localtime(time.time()):
+                break
+            else:
+                print("输入日期小于当前日期，请重新输入")
         except:
             print("没找到所输入城市或日期不合法，请重新输入")
     spider = Spider()
